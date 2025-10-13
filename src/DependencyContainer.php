@@ -185,21 +185,36 @@ class DependencyContainer extends Field
         }
 
         foreach ($this->meta['dependencies'] as $index => $dependency) {
-
             $this->meta['dependencies'][$index]['satisfied'] = false;
 
             if (array_key_exists('empty', $dependency) && empty($resource->{$dependency['property']})) {
                 $this->meta['dependencies'][$index]['satisfied'] = true;
                 continue;
             }
-            // inverted `empty()`
+
             if (array_key_exists('notEmpty', $dependency) && !empty($resource->{$dependency['property']})) {
                 $this->meta['dependencies'][$index]['satisfied'] = true;
                 continue;
             }
-            // inverted
-            if (array_key_exists('nullOrZero', $dependency) && in_array($resource->{$dependency['property']},
-                    [null, 0, '0'], true)) {
+
+            if (array_key_exists('greaterThanZero', $dependency)) {
+                if ($dependency['value'] == $resource->{$dependency['property']}) {
+                    $this->meta['dependencies'][$index]['satisfied'] = true;
+                    continue;
+                }
+            }
+
+            if (array_key_exists('nullOrZero', $dependency) && in_array($resource->{$dependency['property']}, [null, 0, '0'], true)) {
+                $this->meta['dependencies'][$index]['satisfied'] = true;
+                continue;
+            }
+
+            if (array_key_exists('notIn', $dependency) && !in_array($resource->{$dependency['property']}, $dependency['value'], true)) {
+                $this->meta['dependencies'][$index]['satisfied'] = true;
+                continue;
+            }
+
+            if (array_key_exists('notNullOrZero', $dependency) && !in_array($resource->{$dependency['property']}, ['', null, 0, '0'], true)) {
                 $this->meta['dependencies'][$index]['satisfied'] = true;
                 continue;
             }
@@ -209,34 +224,18 @@ class DependencyContainer extends Field
                 continue;
             }
 
-            if (array_key_exists('in', $dependency) && in_array($resource->{$dependency['property']}, $dependency['in'])) {
-                $this->meta['dependencies'][$index]['satisfied'] = true;
-                continue;
-            }
-
-            if (array_key_exists('notin', $dependency) && !in_array($resource->{$dependency['property']}, $dependency['notin'])) {
-                $this->meta['dependencies'][$index]['satisfied'] = true;
-                continue;
-            }
-
             if (array_key_exists('value', $dependency)) {
-                if (is_array($resource)) {
-                    if (isset($resource[$dependency['property']]) && $dependency['value'] == $resource[$dependency['property']]) {
-                        $this->meta['dependencies'][$index]['satisfied'] = true;
-                    }
-                    continue;
-                } elseif ($dependency['value'] == $resource->{$dependency['property']}) {
+                if ($dependency['value'] == $resource->{$dependency['property']}) {
                     $this->meta['dependencies'][$index]['satisfied'] = true;
                     continue;
                 }
-                // @todo: quickfix for MorphTo
-                $morphable_attribute = $resource->getAttribute($dependency['property'] . '_type');
-                if ($morphable_attribute !== null && Str::endsWith($morphable_attribute, '\\' . $dependency['value'])) {
+
+                $morphable_attribute = $resource->getAttribute($dependency['property'].'_type');
+                if ($morphable_attribute !== null && \Illuminate\Support\Str::endsWith($morphable_attribute, '\\'.$dependency['value'])) {
                     $this->meta['dependencies'][$index]['satisfied'] = true;
                     continue;
                 }
             }
-
         }
     }
 
