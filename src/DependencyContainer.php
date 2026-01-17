@@ -4,6 +4,7 @@ namespace Alexwenzel\DependencyContainer;
 
 use Aqjw\MedialibraryField\Fields\Medialibrary;
 use Aqjw\MedialibraryField\Fields\Support\MediaCollectionRules;
+use BackedEnum;
 use Illuminate\Support\Arr;
 use Laravel\Nova\Fields\Field;
 use Laravel\Nova\Http\Requests\NovaRequest;
@@ -177,28 +178,43 @@ class DependencyContainer extends Field
      * @param mixed $resource
      * @param null  $attribute
      */
-    public function resolveForDisplay($resource, $attribute = null)
+    public function resolveForDisplay($resource, $attribute = null): void
     {
         foreach ($this->meta['fields'] as $field) {
             $field->resolveForDisplay($resource);
         }
 
         foreach ($this->meta['dependencies'] as $index => $dependency) {
-
             $this->meta['dependencies'][$index]['satisfied'] = false;
 
             if (array_key_exists('empty', $dependency) && empty($resource->{$dependency['property']})) {
                 $this->meta['dependencies'][$index]['satisfied'] = true;
                 continue;
             }
-            // inverted `empty()`
+
             if (array_key_exists('notEmpty', $dependency) && !empty($resource->{$dependency['property']})) {
                 $this->meta['dependencies'][$index]['satisfied'] = true;
                 continue;
             }
-            // inverted
-            if (array_key_exists('nullOrZero', $dependency) && in_array($resource->{$dependency['property']},
-                    [null, 0, '0'], true)) {
+
+            if (array_key_exists('greaterThanZero', $dependency)) {
+                if ($dependency['value'] == $resource->{$dependency['property']}) {
+                    $this->meta['dependencies'][$index]['satisfied'] = true;
+                    continue;
+                }
+            }
+
+            if (array_key_exists('nullOrZero', $dependency) && in_array($resource->{$dependency['property']}, [null, 0, '0'], true)) {
+                $this->meta['dependencies'][$index]['satisfied'] = true;
+                continue;
+            }
+
+            if (array_key_exists('notIn', $dependency) && !in_array($resource->{$dependency['property']}, $dependency['value'], true)) {
+                $this->meta['dependencies'][$index]['satisfied'] = true;
+                continue;
+            }
+
+            if (array_key_exists('notNullOrZero', $dependency) && !in_array($resource->{$dependency['property']}, ['', null, 0, '0'], true)) {
                 $this->meta['dependencies'][$index]['satisfied'] = true;
                 continue;
             }
@@ -208,34 +224,18 @@ class DependencyContainer extends Field
                 continue;
             }
 
-            if (array_key_exists('in', $dependency) && in_array($resource->{$dependency['property']}, $dependency['in'])) {
-                $this->meta['dependencies'][$index]['satisfied'] = true;
-                continue;
-            }
-
-            if (array_key_exists('notin', $dependency) && !in_array($resource->{$dependency['property']}, $dependency['notin'])) {
-                $this->meta['dependencies'][$index]['satisfied'] = true;
-                continue;
-            }
-
             if (array_key_exists('value', $dependency)) {
-                if (is_array($resource)) {
-                    if (isset($resource[$dependency['property']]) && $dependency['value'] == $resource[$dependency['property']]) {
-                        $this->meta['dependencies'][$index]['satisfied'] = true;
-                    }
-                    continue;
-                } elseif ($dependency['value'] == $resource->{$dependency['property']}) {
+                if ($dependency['value'] == $resource->{$dependency['property']}) {
                     $this->meta['dependencies'][$index]['satisfied'] = true;
                     continue;
                 }
-                // @todo: quickfix for MorphTo
-                $morphable_attribute = $resource->getAttribute($dependency['property'] . '_type');
-                if ($morphable_attribute !== null && Str::endsWith($morphable_attribute, '\\' . $dependency['value'])) {
+
+                $morphable_attribute = $resource->getAttribute($dependency['property'].'_type');
+                if ($morphable_attribute !== null && \Illuminate\Support\Str::endsWith($morphable_attribute, '\\'.$dependency['value'])) {
                     $this->meta['dependencies'][$index]['satisfied'] = true;
                     continue;
                 }
             }
-
         }
     }
 
@@ -246,7 +246,7 @@ class DependencyContainer extends Field
      * @param string $attribute
      * @return array|mixed
      */
-    public function resolve($resource, $attribute = null)
+    public function resolve($resource, $attribute = null): void
     {
         foreach ($this->meta['fields'] as $field) {
             $field->resolve($resource, $attribute);
@@ -334,9 +334,14 @@ class DependencyContainer extends Field
             if (array_key_exists('value', $dependency)
                 && !array_key_exists('in', $dependency)
                 && !array_key_exists('notin', $dependency)
-                && !array_key_exists('nullOrZero', $dependency)
-                && $dependency['value'] == $request->get($dependency['property'])) {
-                $satisfiedCounts++;
+                && !array_key_exists('nullOrZero', $dependency)) {
+                if ($dependency['value'] instanceof BackedEnum) {
+                    if ($dependency['value']->value == $request->get($dependency['property'])) {
+                        $satisfiedCounts++;
+                    }
+                } elseif ($dependency['value'] == $request->get($dependency['property'])) {
+                    $satisfiedCounts++;
+                }
             }
         }
 
@@ -347,10 +352,10 @@ class DependencyContainer extends Field
      * Get a rule set based on field property name
      *
      * @param NovaRequest $request
-     * @param string      $propertyName
+     * @param string      $methodName
      * @return array
      */
-    protected function getSituationalRulesSet(NovaRequest $request, string $propertyName = 'rules')
+    protected function getSituationalRulesSet(NovaRequest $request, string $methodName = 'getRules')
     {
         $fieldsRules = [$this->attribute => []];
 
@@ -366,12 +371,10 @@ class DependencyContainer extends Field
         /** @var Field $field */
         foreach ($this->meta['fields'] as $field) {
             // if field is DependencyContainer, then add rules from dependant fields
-            if ($field instanceof DependencyContainer && $propertyName === "rules") {
-                $fieldsRules[Str::random()] = $field->getSituationalRulesSet($request, $propertyName);
+            if ($field instanceof DependencyContainer && $methodName === "getRules") {
+                $fieldsRules[Str::random()] = $field->getSituationalRulesSet($request, $methodName);
             } elseif ($field instanceof Medialibrary) {
-                $rules = is_callable($field->{$propertyName})
-                    ? call_user_func($field->{$propertyName}, $request)
-                    : $field->{$propertyName};
+                $rules = $field->{$methodName}($request);
 
                 $fieldsRules[$field->attribute] = MediaCollectionRules::make(
                     $rules,
@@ -379,9 +382,7 @@ class DependencyContainer extends Field
                     $field,
                 );
             } else {
-                $fieldsRules[$field->attribute] = is_callable($field->{$propertyName})
-                    ? call_user_func($field->{$propertyName}, $request)
-                    : $field->{$propertyName};
+                $fieldsRules[$field->attribute] = $field->{$methodName}($request);
             }
         }
 
@@ -416,7 +417,7 @@ class DependencyContainer extends Field
      * @param NovaRequest $request
      * @return array
      */
-    public function getRules(NovaRequest $request)
+    public function getRules(NovaRequest $request): array
     {
         return $this->getSituationalRulesSet($request);
     }
@@ -427,9 +428,9 @@ class DependencyContainer extends Field
      * @param NovaRequest $request
      * @return array|string
      */
-    public function getCreationRules(NovaRequest $request)
+    public function getCreationRules(NovaRequest $request): array
     {
-        $fieldsRules = $this->getSituationalRulesSet($request, 'creationRules');
+        $fieldsRules = $this->getSituationalRulesSet($request, 'getCreationRules');
 
         return array_merge_recursive(
             $this->getRules($request),
@@ -443,9 +444,9 @@ class DependencyContainer extends Field
      * @param NovaRequest $request
      * @return array
      */
-    public function getUpdateRules(NovaRequest $request)
+    public function getUpdateRules(NovaRequest $request): array
     {
-        $fieldsRules = $this->getSituationalRulesSet($request, 'updateRules');
+        $fieldsRules = $this->getSituationalRulesSet($request, 'getUpdateRules');
 
         return array_merge_recursive(
             $this->getRules($request),
