@@ -85,10 +85,18 @@ trait HasDependencies
      */
     protected function doesRouteRequireChildFields(): bool
     {
-        return Str::endsWith(Route::currentRouteAction(), [
+        $action = Route::currentRouteAction() ?? '';
+
+        return Str::endsWith($action, [
+            'FieldDestroyController',
             'FieldDestroyController@handle',
+            'FieldDestroyController@__invoke',
+            'ResourceUpdateController',
             'ResourceUpdateController@handle',
+            'ResourceUpdateController@__invoke',
+            'ResourceStoreController',
             'ResourceStoreController@handle',
+            'ResourceStoreController@__invoke',
             'AssociatableController@index',
             'MorphableController@index',
         ]);
